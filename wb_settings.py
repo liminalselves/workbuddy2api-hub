@@ -133,6 +133,11 @@ EGRESS_BACKOFF_ENABLED_KEY = "egress_backoff_enabled"
 # 打开后方向仍是单向的：只有 intl → cn，永远不会把请求从国内版打到国际版。
 REALM_FALLBACK_ENABLED_KEY = "realm_fallback_enabled"
 
+# 11128 零宽软打码：system / developer 一律打码，user / assistant 命中已知敏感
+# 短语才打码，工具消息与参数不改。缺失键读作开——它是对已知 400 的防护，关闭是
+# 运营者的显式选择（面板开关或 WB_SOFT_MASK_ENABLED=0）。
+SOFT_MASK_ENABLED_KEY = "soft_mask_enabled"
+
 # 账号级并发上限：同一个上游账号同时最多跑几个 chat 请求。缺失键读作 0（不限），
 # 老安装的派发行为与上游一字不差。
 #
@@ -2009,6 +2014,26 @@ def set_realm_fallback_enabled(accounts_dir, enabled):
     with _lock:
         data = load(accounts_dir)
         data[REALM_FALLBACK_ENABLED_KEY] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def soft_mask_enabled(accounts_dir):
+    """Whether outbound text gets zero-width soft masking against 11128.
+
+    On unless explicitly turned off. Missing-key reads as on because masking is
+    the protection for a known upstream 400; only a panel switch or env
+    override should disable it.
+    """
+    return load(accounts_dir).get(SOFT_MASK_ENABLED_KEY) is not False
+
+
+def set_soft_mask_enabled(accounts_dir, enabled):
+    """Persist the soft-mask switch. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data[SOFT_MASK_ENABLED_KEY] = enabled
         save(accounts_dir, data)
     return enabled
 

@@ -374,6 +374,21 @@ async function saveEgressBackoff(btn){
   }
 }
 
+async function saveSoftMask(btn){
+  const el = document.getElementById('setSoftMask');
+  const value = !!(el && el.checked);
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {soft_mask_enabled: value});
+    toast(value ? '已启用：11128 零宽软打码' : '已关闭：11128 零宽软打码', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
 /* 用量聚合保留窗口（空间换时间）。后端只接受 >=1 的整数，且各有上限，所以
    先把输入收成整数再发；空值/小数/非数字就地拦下，不送上去换 400。 */
 async function saveUsageKeep(btn){

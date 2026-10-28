@@ -1745,6 +1745,27 @@ const PANEL_STORE = 'wb-proxy-panel-token';
       <section>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
           <div>
+            <h2 style="margin:0">11128 软打码 <em id="setSoftMaskState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              system / developer 正文在每个空格后插入 U+200B；user / assistant 仅命中 DeepSeek Harness、Tokens prefixed with @、explicitly referenced、workspace root 时处理。含 tool_calls 的消息与工具结果不改。上游 11128 / 11-128 时重建请求并全量软打码重试一次。默认开启。
+            </div>
+            <div style="font-size:12px;color:var(--warn);margin-top:4px">
+              注意：打码只改真正发往上游的消息正文，客户端历史、工具参数与工具结果保持原样；环境变量 WB_SOFT_MASK_ENABLED 设置后会覆盖这里的开关。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setSoftMask" type="checkbox" style="width:16px;height:16px">
+              启用 11128 软打码
+            </label>
+            <button onclick="saveSoftMask(this)">保存</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
             <h2 style="margin:0">模型额度定时主动查询 <em id="setQuotaScanState"></em></h2>
             <div style="font-size:12px;color:var(--dim);margin-top:4px">
               勾选要留意的模型后，网关每 6 小时为每个「账号 + 模型」发一个最小请求，主动确认这条配额线是否已经被打满：打到 429 就立即记该模型的冷却，并把上游给的重置时刻交给上面的「模型额度窗口探针」到点处理；请求通了就说明这条线还没到限额。窗口探针管的是「已经限额之后」，这里管的是「还没限额时先知道」。默认不勾选，勾选后才会定时查询。
