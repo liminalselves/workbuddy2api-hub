@@ -63,6 +63,9 @@ for (const name of ['function loadUpdateStatus', 'function applyUpdateStatus',
 has('优先调度开关', 'id="setRemainingPriority"');
 has('优先调度保存', 'function saveRemainingPriority');
 has('优先调度设置键', 'remaining_priority_enabled');
+has('11128 软打码开关', 'id="setSoftMask"');
+has('11128 软打码保存', 'function saveSoftMask');
+has('11128 软打码设置键', 'soft_mask_enabled');
 has('剩余用量分区域表体', 'id="remainingTbodyIntl"');
 has('模型筛选', 'function toggleRemainingModelFilter');
 

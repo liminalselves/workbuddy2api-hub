@@ -51,6 +51,7 @@ const SETTINGS = {
   daily_chat_web_attempts_default: 3,
   local_web_tools: true,
   remaining_priority_enabled: true,
+  soft_mask_enabled: true,
   version: 'v1.6.14',
   accounts_dir: '/data/accounts',
   usage_dir: '/data/usage',
@@ -167,12 +168,15 @@ global.__toasts = toasts;
   assert.equal(element('setRemainingPriority').checked, true,
     '剩余用量优先调度的复选框没写回');
   assert.equal(element('setRemainingPriorityState').textContent, '(已启用)');
+  assert.equal(element('setSoftMask').checked, true,
+    '11128 软打码的复选框没写回');
+  assert.equal(element('setSoftMaskState').textContent, '(已启用)');
   assert.equal(element('setLimitsPerRealm').checked, true, '有分版本覆盖时应勾上');
   assert.equal(element('setWinMaxHeight').value, '640', '窗口限高输入框没写回');
   assert.equal(element('setWinMaxHeightState').textContent, '(当前 640px)',
     '窗口限高状态文案没写回');
 
-  realLog('loadSettings 完整性断言通过（18 项）');
+  realLog('loadSettings 完整性断言通过（20 项）');
 })().catch(e => {
   console.log = realLog;
   console.error(e && e.stack || e);

@@ -22,6 +22,7 @@ import wb_accounts
 import wb_prompt
 import wb_proxy
 import wb_settings
+import wb_transforms as T
 
 CST = datetime.timezone(datetime.timedelta(hours=8))
 
@@ -151,7 +152,9 @@ class BuildBodyPromptTests(unittest.TestCase):
             body = self.build(directory, [
                 {"role": "system", "content": "CLIENT-SYS"},
                 {"role": "user", "content": "hi"}])
-        self.assertEqual(body["messages"][0]["content"], wb_prompt.DEFAULT_PROMPT)
+        # 11128 软打码默认开启：网关自身提示词也会被打码，但仍是替换后的提示词。
+        self.assertEqual(body["messages"][0]["content"],
+                         T.apply_soft_mask(wb_prompt.DEFAULT_PROMPT))
         self.assertNotIn("CLIENT-SYS", json.dumps(body["messages"]))
 
     def test_append_keeps_both_prompts(self):
@@ -161,7 +164,7 @@ class BuildBodyPromptTests(unittest.TestCase):
                 {"role": "system", "content": "CLIENT-SYS"},
                 {"role": "user", "content": "hi"}])
         self.assertEqual([m["content"] for m in body["messages"][:2]],
-                         ["CLIENT-SYS", wb_prompt.DEFAULT_PROMPT])
+                         ["CLIENT-SYS", T.apply_soft_mask(wb_prompt.DEFAULT_PROMPT)])
 
     def test_custom_file_override(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -187,12 +190,14 @@ class BuildBodyPromptTests(unittest.TestCase):
             body = self.build(directory, [
                 {"role": "system", "content": "CLIENT-SYS"},
                 {"role": "user", "content": "hi"}])
-            self.assertEqual(body["messages"][0]["content"], wb_prompt.DEGRADED_PROMPT)
+            self.assertEqual(body["messages"][0]["content"],
+                             T.apply_soft_mask(wb_prompt.DEGRADED_PROMPT))
             wb_settings.set_prompt_config(directory, {"mode": "append"})
             body2 = self.build(directory, [
                 {"role": "system", "content": "CLIENT-SYS"},
                 {"role": "user", "content": "hi"}])
-            self.assertEqual(body2["messages"][0]["content"], wb_prompt.DEGRADED_PROMPT)
+            self.assertEqual(body2["messages"][0]["content"],
+                             T.apply_soft_mask(wb_prompt.DEGRADED_PROMPT))
             self.assertNotIn("CLIENT-SYS", json.dumps(body2["messages"]))
 
     def test_degrade_window_leaves_custom_alone(self):
@@ -200,7 +205,8 @@ class BuildBodyPromptTests(unittest.TestCase):
             wb_settings.set_prompt_config(directory, {"mode": "custom"})
             wb_proxy.PROMPT_DEGRADE.trigger()
             body = self.build(directory, [{"role": "user", "content": "hi"}])
-        self.assertEqual(body["messages"][0]["content"], wb_prompt.DEFAULT_PROMPT)
+        self.assertEqual(body["messages"][0]["content"],
+                         T.apply_soft_mask(wb_prompt.DEFAULT_PROMPT))
 
 
 class DegradedRetryTests(unittest.TestCase):
@@ -278,7 +284,8 @@ class DegradedRetryTests(unittest.TestCase):
 
             self.assertEqual(len(bodies), 2)
             self.assertIn("CLIENT-SYS", json.dumps(bodies[0]["messages"]))
-            self.assertIn(wb_prompt.DEGRADED_PROMPT, json.dumps(bodies[1]["messages"]))
+            self.assertIn(T.apply_soft_mask(wb_prompt.DEGRADED_PROMPT),
+                          [m.get("content") for m in bodies[1]["messages"]])
             self.assertNotIn("CLIENT-SYS", json.dumps(bodies[1]["messages"]))
 
     def test_custom_mode_does_not_degrade(self):

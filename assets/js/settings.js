@@ -283,6 +283,14 @@ async function loadSettings(showToast){
         egressBackoffState.textContent = egressBackoff ? '(已启用)' : '(未启用)';
         egressBackoffState.style.color = egressBackoff ? 'var(--accent2)' : 'var(--dim)';
       }
+      const softMask = data.soft_mask_enabled !== false;
+      const softMaskInput = document.getElementById('setSoftMask');
+      if(softMaskInput) softMaskInput.checked = softMask;
+      const softMaskState = document.getElementById('setSoftMaskState');
+      if(softMaskState){
+        softMaskState.textContent = softMask ? '(已启用)' : '(未启用)';
+        softMaskState.style.color = softMask ? 'var(--accent2)' : 'var(--dim)';
+      }
       const accountConcurrent = (typeof data.account_max_concurrent === 'number') ? data.account_max_concurrent : 0;
       const accountConcurrentInput = document.getElementById('setAccountConcurrent');
       if(accountConcurrentInput) accountConcurrentInput.value = accountConcurrent;

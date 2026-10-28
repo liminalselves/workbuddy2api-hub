@@ -343,13 +343,13 @@ try:
           and (msg.get("usage") or {}).get("output_tokens") == 2, msg.get("usage"))
     sent = (MOCK["requests"][0].get("body") or {}) if MOCK["requests"] else {}
     check("upstream saw the system prompt",
-          any(m.get("role") == "system" and "be brief" in str(m.get("content"))
+          any(m.get("role") == "system" and "be \u200bbrief" in str(m.get("content"))
               for m in sent.get("messages") or []), sent.get("messages"))
     check("upstream saw the user text",
           any(m.get("role") == "user" and "say hi" in str(m.get("content"))
               for m in sent.get("messages") or []), sent.get("messages"))
     check("mid-conversation system role reaches upstream as a system message",
-          any(m.get("role") == "system" and "hook ctx" in str(m.get("content"))
+          any(m.get("role") == "system" and "hook \u200bctx" in str(m.get("content"))
               for m in sent.get("messages") or []), sent.get("messages"))
 
     print()

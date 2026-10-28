@@ -61,6 +61,7 @@ from wb_transforms import (LeakedToolCallStreamFilter, backfill_reasoning_conten
                            normalize_tool_choice, normalize_tools,
                            repack_tool_result_blocks, repair_leaked_tool_calls,
                            responses_stream_error_frame, sanitize_messages,
+                           soft_mask_enabled, soft_mask_messages,
                            translate_max_completion_tokens)
 from wb_translate import (_anthropic_estimate_chat_tokens, _encode_compaction_summary,
                           _has_compaction_trigger, _responses_usage,
@@ -2067,7 +2068,12 @@ def apply_prompt_mode(messages):
     return messages
 
 
-def build_upstream_body(payload):
+def soft_mask_enabled_for_request():
+    """The panel switch (default on), still overridable by the env variable."""
+    return soft_mask_enabled(wb_settings.soft_mask_enabled(ACCOUNTS_DIR))
+
+
+def build_upstream_body(payload, force_soft_mask=False):
     model = payload.get("model") or ""
     # Map an unsupported level before anything below reads the effort, so the
     # thinking backfill and the logged level describe what will actually run.
@@ -2090,12 +2096,14 @@ def build_upstream_body(payload):
     # Prompt mode runs before sanitize/backfill so the gateway prompt is the
     # one the upstream sees, with the client's fingerprint-y system text gone.
     messages = apply_prompt_mode(messages)
+    if not messages or (messages[0].get("role") != "system"):
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    if force_soft_mask or soft_mask_enabled_for_request():
+        messages = soft_mask_messages(messages, force=force_soft_mask)
     messages = sanitize_messages(messages)
     messages = backfill_reasoning_content(
         messages, model, thinking_enabled=thinking_enabled
     )
-    if not messages or (messages[0].get("role") != "system"):
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
     body = dict(payload)
     # Private request markers ride along on the chat body for the Responses
     # path (the namespace map, the local-web-tools flag). They are not part of
@@ -2798,7 +2806,12 @@ def http_error_detail(exc, limit=600):
     open_upstream has to inspect the body to tell a model-level 5xx from an
     account fault, but the HTTP handler later reads the same exception to build
     the client response. Keep the bytes on the exception so both readers work.
+    A second reader must reuse those bytes: reading again yields b"" once the
+    stream is drained and would overwrite the cache with an empty body.
     """
+    raw = getattr(exc, "__dict__", {}).get("wb_body")
+    if raw is not None:
+        return raw[:limit].decode("utf-8", "replace")
     try:
         raw = exc.read(limit)
     except Exception:
@@ -2812,7 +2825,7 @@ def http_error_detail(exc, limit=600):
 
 def read_http_error(exc, limit=600):
     """The body read by http_error_detail, or a fresh read for other errors."""
-    raw = getattr(exc, "wb_body", None)
+    raw = getattr(exc, "__dict__", {}).get("wb_body")
     if raw is not None:
         return raw[:limit]
     try:
@@ -3367,6 +3380,7 @@ def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=No
     last_403_detail = ""
     transient_hits = 0
     degraded_retried = False
+    soft_mask_retried = False
     # 一次请求里因为 11140 换过的号数：默认 0，即第一个号被限制就停手。
     restricted_rotations = 0
     # 本机断网的次数：这一轮里只要出现过，最终报错就按「网络不可用」报，不按
@@ -3561,6 +3575,15 @@ def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=No
             # model and the request, and the callers record it on the usage row.
             return resp, account, upstream_effort_of(upstream_body, model)
         except urllib.error.HTTPError as exc:
+            if not soft_mask_retried and soft_mask_enabled_for_request():
+                detail = http_error_detail(exc)
+                if "11128" in detail or "11-128" in detail:
+                    soft_mask_retried = True
+                    upstream_body = build_upstream_body(payload, force_soft_mask=True)
+                    tried.discard(account.uid)
+                    max_attempts += 1
+                    log("upstream 11128 -> full soft-mask retry")
+                    continue
             if exc.code == 429:
                 try:
                     detail = read_http_error(exc, 600).decode("utf-8", "replace")
@@ -4525,6 +4548,7 @@ def runtime_settings_view():
             wb_settings.egress_backoff_enabled(ACCOUNTS_DIR),
         "realm_fallback_enabled":
             wb_settings.realm_fallback_enabled(ACCOUNTS_DIR),
+        "soft_mask_enabled": wb_settings.soft_mask_enabled(ACCOUNTS_DIR),
         "account_max_concurrent":
             wb_settings.account_max_concurrent(ACCOUNTS_DIR),
         "account_max_concurrent_max":

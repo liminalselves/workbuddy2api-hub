@@ -1,5 +1,10 @@
 """Tests for fingerprint sanitization, including PR #62 OmO Sisyphus-Junior fix."""
+import copy
+import io
 import json, os, sys, unittest
+import tempfile
+import urllib.error
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _isolated_dirs import isolated_data_dirs  # noqa: E402  (its own data root)
@@ -9,7 +14,9 @@ from _isolated_dirs import isolated_data_dirs  # noqa: E402  (its own data root)
 # directories in the repo after a run.
 _TMP = isolated_data_dirs("wb-fingerprint-")
 
+import wb_accounts
 import wb_proxy as P
+import wb_settings
 import wb_transforms as T
 
 class FingerprintSanitizationTests(unittest.TestCase):
@@ -200,10 +207,13 @@ class DshGuiParagraphTests(unittest.TestCase):
     def test_wire_body_carries_the_rewrite(self):
         # 走完整链路再断言一次：规则接上了还不够，得确认 build_upstream_body
         # 真的用它构造出站 body（漏接时单测全绿、线上照旧 400）。
-        body = P.build_upstream_body({
-            "model": "deepseek-v4.1-flash",
-            "messages": [{"role": "system", "content": self.GUI},
-                         {"role": "user", "content": "hi"}]})
+        # 软打码默认开启会先把空格换成空格+零宽字符，品牌句不再命中这条改写；
+        # 这里关掉软打码，单独钉住旧清洗路径。
+        with mock.patch.dict(os.environ, {"WB_SOFT_MASK_ENABLED": "0"}):
+            body = P.build_upstream_body({
+                "model": "deepseek-v4.1-flash",
+                "messages": [{"role": "system", "content": self.GUI},
+                             {"role": "user", "content": "hi"}]})
         system = body["messages"][0]["content"]
         self.assertIn("DeepSeek Web GUI", system)
         self.assertNotIn("DeepSeek Harness", system)
@@ -248,12 +258,15 @@ class AssistantHistoryFingerprintTests(unittest.TestCase):
             self.assertEqual(out[0]["content"], text, text)
 
     def test_wire_body_carries_assistant_rewrite(self):
-        body = P.build_upstream_body({
-            "model": "deepseek-v4.1-flash",
-            "messages": [
-                {"role": "assistant", "content": self.IDENTITY},
-                {"role": "user", "content": self.IDENTITY},
-            ]})
+        # 软打码默认开启会先改空格，身份句不再命中旧改写；这里关掉软打码，
+        # 单独钉住 assistant 历史的旧清洗路径。
+        with mock.patch.dict(os.environ, {"WB_SOFT_MASK_ENABLED": "0"}):
+            body = P.build_upstream_body({
+                "model": "deepseek-v4.1-flash",
+                "messages": [
+                    {"role": "assistant", "content": self.IDENTITY},
+                    {"role": "user", "content": self.IDENTITY},
+                ]})
         by_role = {}
         for m in body["messages"]:
             by_role.setdefault(m.get("role"), m.get("content"))
@@ -308,6 +321,219 @@ class IdentityVerbVariantsTests(unittest.TestCase):
         self.assertEqual(out[0]["content"], self.CLEAN)
         self.assertEqual(out[1]["content"], self.CLEAN)
         self.assertEqual(out[2]["content"], fp)
+
+
+class SoftMaskTests(unittest.TestCase):
+    def test_apply_soft_mask_only_changes_spaces(self):
+        self.assertEqual(T.apply_soft_mask("one two  three"),
+                         "one \u200btwo \u200b \u200bthree")
+        for value in (None, 1, {"text": "one two"}):
+            self.assertEqual(T.apply_soft_mask(value), value)
+
+    def test_roles_and_sensitive_terms(self):
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "developer", "content": "developer prompt"},
+            {"role": "user", "content": "mention DeepSeek Harness here"},
+            {"role": "assistant", "content": "Tokens prefixed with @ are sensitive"},
+            {"role": "user", "content": "ordinary user text"},
+            {"role": "assistant", "content": "ordinary assistant text"},
+        ]
+        before = copy.deepcopy(messages)
+        out = T.soft_mask_messages(messages)
+        self.assertEqual(out[0]["content"], "system \u200bprompt")
+        self.assertEqual(out[1]["content"], "developer \u200bprompt")
+        self.assertEqual(out[2]["content"], "mention \u200bDeepSeek \u200bHarness \u200bhere")
+        self.assertEqual(out[3]["content"],
+                         "Tokens \u200bprefixed \u200bwith \u200b@ \u200bare \u200bsensitive")
+        self.assertEqual(out[4]["content"], messages[4]["content"])
+        self.assertEqual(out[5]["content"], messages[5]["content"])
+        self.assertEqual(messages, before)
+
+    def test_additional_sensitive_terms(self):
+        for text in ("paths explicitly referenced by the user",
+                     "resolve from the workspace root"):
+            with self.subTest(text=text):
+                out = T.soft_mask_messages([{"role": "user", "content": text}])
+                self.assertEqual(out[0]["content"], T.apply_soft_mask(text))
+
+    def test_tool_messages_and_calls_are_never_masked(self):
+        arguments = '{"query":"DeepSeek Harness and Tokens prefixed with @"}'
+        messages = [
+            {"role": "assistant", "content": "DeepSeek Harness stays here",
+             "tool_calls": [{"function": {"name": "run", "arguments": arguments}}]},
+            {"role": "tool", "content": "tool result with spaces"},
+            {"role": "function", "content": "legacy tool result"},
+        ]
+        for force in (False, True):
+            with self.subTest(force=force):
+                out = T.soft_mask_messages(messages, force=force)
+                self.assertEqual(out, messages)
+                self.assertEqual(out[0]["tool_calls"][0]["function"]["arguments"], arguments)
+
+    def test_multipart_masks_only_text_parts(self):
+        image = {"type": "image_url", "image_url": {"url": "https://example.invalid/a b"}}
+        out = T.soft_mask_messages([
+            {"role": "system", "content": [{"type": "text", "text": "two words"}, image]},
+            {"role": "user", "content": [{"type": "text", "text": "DeepSeek Harness"}, image]},
+        ])
+        self.assertEqual(out[0]["content"][0]["text"], "two \u200bwords")
+        self.assertEqual(out[1]["content"][0]["text"], "DeepSeek \u200bHarness")
+        self.assertIs(out[0]["content"][1], image)
+        self.assertIs(out[1]["content"][1], image)
+
+    def test_force_masks_ordinary_roles_but_not_tools(self):
+        out = T.soft_mask_messages([
+            {"role": "user", "content": "ordinary user text"},
+            {"role": "assistant", "content": "ordinary assistant text"},
+            {"role": "tool", "content": "ordinary tool text"},
+        ], force=True)
+        self.assertEqual(out[0]["content"], "ordinary \u200buser \u200btext")
+        self.assertEqual(out[1]["content"], "ordinary \u200bassistant \u200btext")
+        self.assertEqual(out[2]["content"], "ordinary tool text")
+
+    def test_wire_body_opt_in_and_sensitive_assistant(self):
+        payload = {"model": "deepseek-v4.1-flash", "messages": [
+            {"role": "system", "content": "system prompt"},
+            {"role": "assistant", "content": "DeepSeek Harness history"},
+            {"role": "user", "content": "ordinary user text"},
+        ]}
+        with mock.patch.dict(os.environ, {"WB_SOFT_MASK_ENABLED": "0"}):
+            body = P.build_upstream_body(payload)
+            self.assertNotIn("\u200b", body["messages"][0]["content"])
+        with mock.patch.dict(os.environ, {"WB_SOFT_MASK_ENABLED": "1"}):
+            body = P.build_upstream_body(payload)
+            self.assertEqual(body["messages"][0]["content"], "system \u200bprompt")
+            self.assertEqual(body["messages"][1]["content"],
+                             "DeepSeek \u200bHarness \u200bhistory")
+            self.assertEqual(body["messages"][2]["content"], "ordinary user text")
+
+    def test_panel_setting_defaults_on_and_off_stops_masking(self):
+        payload = {"model": "deepseek-v4.1-flash", "messages": [
+            {"role": "system", "content": "system prompt"}]}
+        old_dir = P.ACCOUNTS_DIR
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(os.environ, {"WB_SOFT_MASK_ENABLED": ""}):
+            P.ACCOUNTS_DIR = directory
+            try:
+                self.assertTrue(wb_settings.soft_mask_enabled(directory))
+                body = P.build_upstream_body(payload)
+                self.assertEqual(body["messages"][0]["content"],
+                                 "system \u200bprompt")
+                wb_settings.set_soft_mask_enabled(directory, False)
+                self.assertFalse(wb_settings.soft_mask_enabled(directory))
+                body = P.build_upstream_body(payload)
+                self.assertEqual(body["messages"][0]["content"], "system prompt")
+                with mock.patch.dict(os.environ, {"WB_SOFT_MASK_ENABLED": "1"}):
+                    body = P.build_upstream_body(payload)
+                    self.assertEqual(body["messages"][0]["content"],
+                                     "system \u200bprompt")
+            finally:
+                P.ACCOUNTS_DIR = old_dir
+
+
+class SoftMaskRetryTests(unittest.TestCase):
+    def make_pool(self, account):
+        class Pool(object):
+            accounts = [account]
+            affinity = type("Affinity", (), {
+                "unbind": lambda self, key: None,
+                "demote": lambda self, key, uid=None: None,
+            })()
+
+            def count_ready(self, realm, model=None):
+                return 1
+
+            def pick_for_session(self, realm, session_key=None, exclude=(),
+                                 model=None, page=None):
+                return account
+
+            def apply_remaining_weights(self, weights=None):
+                return weights or {}
+
+        return Pool()
+
+    def run_request(self, payload, failures, realm="intl"):
+        bodies = []
+
+        class Response(object):
+            def close(self):
+                pass
+
+        def fake_urlopen(req, timeout=30, proxy=""):
+            bodies.append(json.loads(req.data.decode("utf-8")))
+            index = len(bodies) - 1
+            if index < len(failures):
+                raise urllib.error.HTTPError(
+                    "https://upstream.invalid", 400, "Bad Request", {},
+                    io.BytesIO(failures[index].encode("utf-8")))
+            return Response()
+
+        with tempfile.TemporaryDirectory() as directory:
+            account = wb_accounts.Account(
+                {"uid": "soft-mask-retry", "accessToken": "t", "realm": realm},
+                os.path.join(directory, "soft-mask-retry.json"))
+            with mock.patch.object(P, "POOL", self.make_pool(account)), \
+                    mock.patch.object(P, "ACCOUNTS_DIR", directory), \
+                    mock.patch.object(wb_accounts, "urlopen", fake_urlopen), \
+                    mock.patch.dict(os.environ, {"WB_SOFT_MASK_ENABLED": "1"}):
+                try:
+                    response, _account, _effort = P.open_upstream(
+                        payload, target_realm=realm)
+                    response.close()
+                    return bodies, None
+                except urllib.error.HTTPError as exc:
+                    return bodies, exc
+
+    def payload(self):
+        arguments = '{"query":"keep every space"}'
+        return {"model": "deepseek-v4.1-flash", "messages": [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "ordinary user text"},
+            {"role": "assistant", "content": "ordinary assistant text"},
+            {"role": "assistant", "content": "tool call content",
+             "tool_calls": [{"id": "call_1", "type": "function",
+                             "function": {"name": "run", "arguments": arguments}}]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool result text"},
+        ]}
+
+    def test_11128_retries_once_with_all_ordinary_content_masked(self):
+        bodies, error = self.run_request(
+            self.payload(), ['{"code":11128,"message":"illegal channel"}'])
+        self.assertIsNone(error)
+        self.assertEqual(len(bodies), 2)
+        first, second = bodies
+        self.assertEqual(first["messages"][0]["content"], "system \u200bprompt")
+        self.assertEqual(first["messages"][1]["content"], "ordinary user text")
+        self.assertEqual(second["messages"][1]["content"], "ordinary \u200buser \u200btext")
+        self.assertEqual(second["messages"][2]["content"],
+                         "ordinary \u200bassistant \u200btext")
+        self.assertEqual(second["messages"][3]["content"], "tool call content")
+        self.assertEqual(second["messages"][3]["tool_calls"][0]["function"]["arguments"],
+                         '{"query":"keep every space"}')
+        self.assertEqual(second["messages"][4]["content"], "tool result text")
+
+    def test_11128_retry_also_applies_to_china_realm(self):
+        bodies, error = self.run_request(
+            self.payload(), ['{"code":11128,"message":"illegal channel"}'],
+            realm="cn")
+        self.assertIsNone(error)
+        self.assertEqual(len(bodies), 2)
+        self.assertEqual(bodies[1]["messages"][1]["content"],
+                         "ordinary \u200buser \u200btext")
+
+    def test_second_11128_is_returned_without_another_retry(self):
+        failure = '{"code":11128,"message":"illegal channel"}'
+        bodies, error = self.run_request(self.payload(), [failure, failure])
+        self.assertIsNotNone(error)
+        self.assertEqual(len(bodies), 2)
+        self.assertIn("11128", P.read_http_error(error).decode("utf-8"))
+
+    def test_unrelated_400_is_not_retried(self):
+        bodies, error = self.run_request(
+            self.payload(), ['{"code":11101,"message":"bad request"}'])
+        self.assertIsNotNone(error)
+        self.assertEqual(len(bodies), 1)
 
 
 if __name__ == "__main__":

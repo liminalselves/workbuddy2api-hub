@@ -24,6 +24,81 @@ from wb_wire import _new_id, normalize_usage_cache_aliases
 # ---------------------------------------------------------------------------
 # Fingerprint Sanitization (immunizes against Codex / Claude Code WAF patterns)
 # ---------------------------------------------------------------------------
+SOFT_MASK_SENSITIVE_TERMS = (
+    "deepseek harness",
+    "tokens prefixed with @",
+    "explicitly referenced",
+    "workspace root",
+)
+
+
+def soft_mask_enabled(persisted=True):
+    """Panel switch, with WB_SOFT_MASK_ENABLED as an explicit override.
+
+    An empty env value means "not set": the persisted panel choice wins. A real
+    value forces on/off, so tests and operators can pin either side without
+    rewriting settings.json.
+    """
+    raw = os.environ.get("WB_SOFT_MASK_ENABLED")
+    if raw is not None and raw.strip():
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    return persisted is not False
+
+
+def apply_soft_mask(text):
+    if not isinstance(text, str):
+        return text
+    return text.replace(" ", " \u200b")
+
+
+def _soft_mask_content(content):
+    if isinstance(content, str):
+        return apply_soft_mask(content)
+    if isinstance(content, list):
+        out = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" and "text" in part:
+                item = dict(part)
+                item["text"] = apply_soft_mask(item["text"])
+                out.append(item)
+            else:
+                out.append(part)
+        return out
+    return content
+
+
+def _has_soft_mask_sensitive_term(content):
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = "\n".join(
+            part.get("text") for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+            and isinstance(part.get("text"), str))
+    else:
+        return False
+    lowered = text.lower()
+    return any(term in lowered for term in SOFT_MASK_SENSITIVE_TERMS)
+
+
+def soft_mask_messages(messages, force=False):
+    out = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            out.append(message)
+            continue
+        item = dict(message)
+        role = item.get("role")
+        protected = role in ("tool", "function") or "tool_calls" in item
+        selected = (force or role in ("system", "developer")
+                    or (role in ("user", "assistant")
+                        and _has_soft_mask_sensitive_term(item.get("content"))))
+        if not protected and selected and "content" in item:
+            item["content"] = _soft_mask_content(item["content"])
+        out.append(item)
+    return out
+
+
 SANITIZE_FEATURES = (
     "x-anthropic-billing-header",
     "cc_entrypoint=",

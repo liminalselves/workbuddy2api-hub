@@ -158,5 +158,21 @@ class UsageRetentionTests(unittest.TestCase):
                 P.ACCOUNTS_DIR = old_dir
 
 
+class SoftMaskSwitchTests(unittest.TestCase):
+    """11128 软打码开关：缺失读作开，显式关闭后落盘并回读。"""
+
+    def test_missing_key_reads_as_on(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertTrue(wb_settings.soft_mask_enabled(directory))
+
+    def test_round_trip(self):
+        for value in (False, True):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                self.assertIs(wb_settings.set_soft_mask_enabled(directory, value), value)
+                self.assertIs(wb_settings.soft_mask_enabled(directory), value)
+                with open(wb_settings.settings_path(directory), encoding="utf-8") as fh:
+                    self.assertIs(json.load(fh)["soft_mask_enabled"], value)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

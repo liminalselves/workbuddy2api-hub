@@ -544,6 +544,14 @@ class SettingsRoutes(object):
                                    "invalid_request_error")
             wb_settings.set_realm_fallback_enabled(_gw().ACCOUNTS_DIR, raw)
             reply["realm_fallback_enabled"] = raw
+        if "soft_mask_enabled" in payload:
+            # 11128 零宽软打码（默认开）：严格 JSON 布尔；环境变量仍可强制覆盖。
+            raw = payload.get("soft_mask_enabled")
+            if not isinstance(raw, bool):
+                return self._error(400, "soft_mask_enabled must be true or false",
+                                   "invalid_request_error")
+            wb_settings.set_soft_mask_enabled(_gw().ACCOUNTS_DIR, raw)
+            reply["soft_mask_enabled"] = raw
         if "account_max_concurrent" in payload:
             # 账号级并发上限：0 = 不限（默认，与上游一字不差）；1..10 = 每账号
             # 同时最多几个 chat 请求。严格整数，字符串 "1" 不算数（它会被当成
