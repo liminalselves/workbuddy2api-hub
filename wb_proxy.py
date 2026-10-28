@@ -2809,7 +2809,7 @@ def http_error_detail(exc, limit=600):
     A second reader must reuse those bytes: reading again yields b"" once the
     stream is drained and would overwrite the cache with an empty body.
     """
-    raw = getattr(exc, "wb_body", None)
+    raw = getattr(exc, "__dict__", {}).get("wb_body")
     if raw is not None:
         return raw[:limit].decode("utf-8", "replace")
     try:
@@ -2825,7 +2825,7 @@ def http_error_detail(exc, limit=600):
 
 def read_http_error(exc, limit=600):
     """The body read by http_error_detail, or a fresh read for other errors."""
-    raw = getattr(exc, "wb_body", None)
+    raw = getattr(exc, "__dict__", {}).get("wb_body")
     if raw is not None:
         return raw[:limit]
     try:

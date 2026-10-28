@@ -157,6 +157,12 @@ class LocalNetworkClassifierTests(unittest.TestCase):
                         self.assertFalse(P.looks_like_local_network(exc))
                         self.assertEqual(P.is_transient(exc), status >= 500)
 
+        error = DelegatingHTTPError("https://up", 401, "HTTP failure", {}, None)
+        with self.assertRaises(Exception):
+            getattr(error, "wb_body")
+        self.assertEqual(P.http_error_detail(error), "")
+        self.assertEqual(P.read_http_error(error), b"")
+
     def test_host_side_failures_are_recognised(self):
         cases = [
             socket.gaierror(-3, "Temporary failure in name resolution"),
