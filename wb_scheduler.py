@@ -385,11 +385,16 @@ class Scheduler:
         checkin_count = 0
         report_count = 0
         travel_count = 0
+        growth_count = 0
+        growth_credit = 0
         daily_chat_count = 0
         daily_chat_targets = []
         cycle_hour = time.localtime().tm_hour
         run_checkin = (not daily_chat_only
                        and (force or cycle_hour in self.checkin_hours))
+        directory = getattr(self.pool, "dir", "") or ""
+        run_growth = (run_checkin and bool(directory)
+                      and wb_settings.growth_tasks_auto_run(directory))
         run_travel = (not daily_chat_only
                       and (force or cycle_hour in self.travel_hours))
         run_keepalive = (not daily_chat_only
@@ -467,6 +472,24 @@ class Scheduler:
                             self.log(f"! 账号 [{uid8}] 对话活跃上报失败: {res.get('error') or res.get('msg')}")
                         time.sleep(1.0)
 
+                if run_growth and not acc.uses_enterprise_billing():
+                    self.log(f"开始为国内版账号 [{uid8}] 自动执行完整成长任务...", tag="tasks")
+                    try:
+                        growth = wb_tasks.run_growth_tasks(acc, gap=1.0, claim=True,
+                                                          travel=False)
+                        for line in growth.get("logs", []):
+                            self.log(f"成长任务 [{uid8}] {line}", tag="tasks")
+                        growth_credit += growth.get("earned_credit") or 0
+                        if growth.get("ok"):
+                            growth_count += 1
+                        else:
+                            self.log(f"! 账号 [{uid8}] 成长任务未完成："
+                                     f"{growth.get('msg') or '请查看任务日志'}", tag="tasks")
+                    except Exception as exc:
+                        self.log(f"! 账号 [{uid8}] 成长任务异常: {exc}", tag="tasks")
+                    finally:
+                        _proxy_module().invalidate_tasks_cache()
+
                 if run_travel:
                     # 检查猫猫旅行
                     tr = do_cat_travel(acc)
@@ -498,7 +521,7 @@ class Scheduler:
         if daily_chat_targets:
             daily_chat_count = self._run_daily_chat_batch(daily_chat_targets)
 
-        self.log(f"巡检完成：Token保活 {refreshed_count} 个，国内签到 {checkin_count} 个，活跃上报 {report_count} 个，猫猫日常 {travel_count} 个，国际活跃 {daily_chat_count} 个")
+        self.log(f"巡检完成：Token保活 {refreshed_count} 个，国内签到 {checkin_count} 个，活跃上报 {report_count} 个，成长流水 {growth_count} 个（+{growth_credit} 积分），猫猫日常 {travel_count} 个，国际活跃 {daily_chat_count} 个")
 
     def _daily_chat_concurrency(self):
         directory = getattr(self.pool, "dir", "") or ""
@@ -728,6 +751,9 @@ class Scheduler:
             "mode_intl": mode_intl,
             "last_run_time": self.last_run_time or "尚未运行",
             "next_run_time": self.next_run_time or "待调度",
+            "growth_tasks_auto_run": bool(getattr(self.pool, "dir", ""))
+                and wb_settings.growth_tasks_auto_run(self.pool.dir),
+            "growth_tasks_hours": list(self.checkin_hours),
             "windows": windows,
             "quota_scans": scans,
             # 国际版每日活跃的排程与现场：面板「任务与福利」页的状态块读这几项。

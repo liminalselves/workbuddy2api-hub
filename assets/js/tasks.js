@@ -185,6 +185,30 @@ async function runGrowthTasks(btn){
   }
 }
 
+function renderGrowthAutoRun(s){
+  const input = document.getElementById('growthAutoRun');
+  if(input && !input.disabled) input.checked = s.growth_tasks_auto_run === true;
+  const schedule = document.getElementById('growthAutoRunSchedule');
+  if(schedule){
+    schedule.textContent = (s.growth_tasks_hours || []).map(h => String(h).padStart(2, '0') + ':00').join(' / ');
+  }
+}
+
+async function saveGrowthAutoRun(input){
+  const value = input.checked;
+  input.disabled = true;
+  try{
+    const r = await postJSON('/settings/save', {growth_tasks_auto_run: value});
+    input.checked = r.growth_tasks_auto_run === true;
+    await loadSchedulerStatus();
+  }catch(e){
+    input.checked = !value;
+    toast('保存失败: ' + e.message, 'bad');
+  }finally{
+    input.disabled = false;
+  }
+}
+
 function saveGrowthAutoClaim(checked){
   try { localStorage.setItem('wb-growth-auto-claim', checked ? '1' : '0'); } catch(e) {}
 }
@@ -270,6 +294,7 @@ async function triggerStreakBonus(btn){
 async function loadSchedulerStatus(){
   try{
     const s = await getJSON("/scheduler");
+    renderGrowthAutoRun(s);
     const bar = document.getElementById("schedulerBar");
     if(!bar) return;
     const dot = document.getElementById("schedDot");

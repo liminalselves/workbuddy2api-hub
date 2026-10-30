@@ -685,6 +685,14 @@ const PANEL_STORE = 'wb-proxy-panel-token';
       </div>
     </div>
 
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;font-size:12px;color:var(--dim)">
+      <label style="display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="growthAutoRun" onchange="saveGrowthAutoRun(this)" aria-describedby="growthAutoRunHelp growthAutoRunSchedule"> 自动执行国内成长任务
+      </label>
+      <span id="growthAutoRunSchedule"></span>
+      <span id="growthAutoRunHelp">默认关闭；开启后按签到时段为“任务开”的个人账号接取、推进并领奖。上方“自动领取”仅控制手动执行。</span>
+    </div>
+
     <div class="cards" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(185px,1fr))">
       <div class="card accent2" title="活动 Season: 10 (第 10 期)&#10;活动开始时间: 2026-09-30 00:00:00&#10;活动截止时间: 2026-10-15 23:59:59">
         <div class="k">本期 Buddy 加油站活动</div>

@@ -4493,6 +4493,7 @@ def runtime_settings_view():
         "pricing_refresh_minutes": wb_settings.pricing_refresh_minutes(ACCOUNTS_DIR),
         "credits_refresh_hours": wb_settings.credits_refresh_hours(ACCOUNTS_DIR),
         "section_max_height": wb_settings.section_max_height(ACCOUNTS_DIR),
+        "growth_tasks_auto_run": wb_settings.growth_tasks_auto_run(ACCOUNTS_DIR),
         "schedule": dict(wb_settings.schedule_hours(ACCOUNTS_DIR),
                          daily_chat=wb_settings.daily_chat_times(ACCOUNTS_DIR),
                          daily_chat_effective=wb_settings.daily_chat_effective_times(

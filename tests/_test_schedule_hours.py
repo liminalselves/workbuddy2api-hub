@@ -8,6 +8,11 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from _isolated_dirs import isolated_data_dirs
+
+_TMP = isolated_data_dirs("wb-schedule-")
+
+import wb_proxy
 import wb_scheduler
 import wb_settings
 
@@ -107,6 +112,10 @@ class FakeAccount(object):
 
     def task_active(self):
         return self.tasks_enabled
+
+    def uses_enterprise_billing(self):
+        return bool(getattr(self, "enterprise", False)
+                    or getattr(self, "is_api_key", False))
 
     def can_checkin(self):
         return True
@@ -237,6 +246,127 @@ class TaskGatingTests(unittest.TestCase):
             seen = self._run_at(scheduler, account, 3, force=True)
             self.assertEqual((account.checkins, account.reports), (1, 1))
             self.assertEqual((seen["travel"], seen["bonus"], seen["cat"]), (1, 1, 1))
+
+
+class GrowthAutoRunTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="growth-schedule-")
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = self.tmp.name
+        self.pool = StubPool(self.directory)
+        self.acc = FakeAccount()
+        self.pool.accounts = [self.acc]
+        self.scheduler = wb_scheduler.Scheduler(self.pool)
+        self.scheduler.checkin_hours = [10, 20]
+        self.scheduler.travel_hours = [9, 21]
+        self.growth = mock.Mock(return_value={
+            "ok": True, "earned_credit": 100, "logs": ["claimed +100"]})
+
+    def run_at(self, hour=10, **kwargs):
+        stamp = time.struct_time((2026, 10, 30, hour, 0, 0, 0, 0, -1))
+        with mock.patch.object(wb_scheduler.time, "localtime", return_value=stamp), \
+                mock.patch.object(wb_scheduler.time, "sleep"), \
+                mock.patch.object(wb_proxy, "restriction_hold_remaining", return_value=0), \
+                mock.patch.object(wb_proxy, "invalidate_tasks_cache") as invalidate, \
+                mock.patch.object(wb_scheduler.wb_tasks, "run_growth_tasks", self.growth), \
+                mock.patch.object(wb_scheduler, "do_cat_travel") as travel, \
+                mock.patch.object(wb_scheduler.wb_tasks, "run_streak_bonus"), \
+                mock.patch.object(wb_scheduler.wb_tasks, "run_night_growth"), \
+                mock.patch.object(self.scheduler, "_run_daily_chat_batch", return_value=0):
+            self.scheduler._run_cycle("test", **kwargs)
+        return travel, invalidate
+
+    def test_opt_in_round_trip_and_bad_stored_values(self):
+        self.assertFalse(wb_settings.growth_tasks_auto_run(self.directory))
+        for value in (True, False):
+            wb_settings.set_growth_tasks_auto_run(self.directory, value)
+            self.assertIs(wb_settings.growth_tasks_auto_run(self.directory), value)
+        for value in ("true", 1, None):
+            wb_settings.save(self.directory, {"growth_tasks_auto_run": value})
+            self.assertFalse(wb_settings.growth_tasks_auto_run(self.directory))
+
+    def test_save_route_validates_and_exposes_the_switch(self):
+        handler = mock.Mock()
+        with mock.patch.object(wb_proxy, "ACCOUNTS_DIR", self.directory):
+            for value in (True, False):
+                handler._payload_or_error.return_value = {"growth_tasks_auto_run": value}
+                wb_proxy.Handler._handle_settings_save(handler)
+                self.assertIs(handler._json.call_args[0][1]["growth_tasks_auto_run"], value)
+            for value in ("true", 1, None, []):
+                handler._payload_or_error.return_value = {"growth_tasks_auto_run": value}
+                wb_proxy.Handler._handle_settings_save(handler)
+                self.assertEqual(handler._error.call_args[0][0], 400)
+            self.assertFalse(wb_settings.growth_tasks_auto_run(self.directory))
+
+    def test_default_off_including_forced_cycle(self):
+        self.run_at(force=True)
+        self.growth.assert_not_called()
+
+    def test_enabled_runs_after_checkin_even_when_already_checked_in(self):
+        wb_settings.set_growth_tasks_auto_run(self.directory, True)
+        self.acc.can_checkin = lambda: False
+        travel, invalidate = self.run_at()
+        self.growth.assert_called_once_with(self.acc, gap=1.0, claim=True, travel=False)
+        travel.assert_not_called()
+        invalidate.assert_called_once_with()
+        self.assertTrue(any("成长流水 1 个（+100 积分）" in line
+                            for line in self.scheduler.logs))
+
+    def test_wrong_slot_and_web_only_cycle_do_not_run_growth(self):
+        wb_settings.set_growth_tasks_auto_run(self.directory, True)
+        for hour, options in ((1, {}), (9, {}), (22, {}),
+                              (10, {"daily_chat_only": True})):
+            with self.subTest(hour=hour, options=options):
+                self.run_at(hour, **options)
+        self.growth.assert_not_called()
+
+    def test_account_gates(self):
+        wb_settings.set_growth_tasks_auto_run(self.directory, True)
+        for field, value in (("tasks_enabled", False), ("realm", "intl"),
+                             ("enterprise", True), ("is_api_key", True),
+                             ("restricted_until", time.time() + 3600)):
+            with self.subTest(field=field):
+                self.acc = FakeAccount()
+                setattr(self.acc, field, value)
+                self.pool.accounts = [self.acc]
+                self.run_at()
+        self.growth.assert_not_called()
+
+    def test_exception_does_not_abort_later_accounts_or_travel(self):
+        wb_settings.set_growth_tasks_auto_run(self.directory, True)
+        second = FakeAccount()
+        second.uid = "second-account"
+        self.pool.accounts.append(second)
+        self.growth.side_effect = [RuntimeError("upstream failed"),
+                                  {"ok": True, "earned_credit": 50, "logs": []}]
+        travel, invalidate = self.run_at(3, force=True)
+        self.assertEqual(self.growth.call_count, 2)
+        self.assertEqual(travel.call_count, 2)
+        self.assertEqual(invalidate.call_count, 2)
+        self.assertTrue(any("upstream failed" in line for line in self.scheduler.logs))
+        self.assertTrue(any("成长流水 1 个（+50 积分）" in line
+                            for line in self.scheduler.logs))
+
+    def test_partial_failure_keeps_earned_credit_and_logs(self):
+        wb_settings.set_growth_tasks_auto_run(self.directory, True)
+        self.growth.return_value = {"ok": False, "earned_credit": 300,
+                                    "logs": ["task list unavailable"]}
+        self.run_at()
+        self.assertTrue(any("task list unavailable" in line
+                            for line in self.scheduler.logs))
+        self.assertTrue(any("成长流水 0 个（+300 积分）" in line
+                            for line in self.scheduler.logs))
+
+    def test_status_and_setting_changes_are_live(self):
+        self.assertFalse(self.scheduler.status()["growth_tasks_auto_run"])
+        wb_settings.set_growth_tasks_auto_run(self.directory, True)
+        self.assertTrue(self.scheduler.status()["growth_tasks_auto_run"])
+        self.assertEqual(self.scheduler.status()["growth_tasks_hours"], [9, 21])
+        self.scheduler.checkin_hours = [10, 20]
+        self.run_at()
+        wb_settings.set_growth_tasks_auto_run(self.directory, False)
+        self.run_at()
+        self.assertEqual(self.growth.call_count, 1)
 
 
 class LogRoutingTests(unittest.TestCase):

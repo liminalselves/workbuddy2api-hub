@@ -126,6 +126,24 @@ class GrowthPrereqTests(unittest.TestCase):
         # first_buddy 已完成但没领奖，状态停在 completed，等用户手动领取。
         self.assertEqual(self.state["fb"], 1)
 
+    def test_scheduler_can_claim_growth_without_touching_travel(self):
+        from unittest import mock
+
+        task = _task("create_canvas", status="completed", current=1)
+        with mock.patch.object(T, "fetch_growth_tasks", return_value=[task]), \
+                mock.patch.object(T, "claim_task", return_value={"ok": True, "credit": 300}) as claim, \
+                mock.patch.object(T, "do_cat_travel") as travel:
+            result = T.run_growth_tasks(FakeAccount(), gap=0, travel=False)
+            self.assertEqual(result["earned_credit"], 300)
+            claim.assert_called_once_with(mock.ANY, "create_canvas")
+            travel.assert_not_called()
+            task["status"] = "claimed"
+            result = T.run_growth_tasks(FakeAccount(), gap=0, travel=False)
+            self.assertEqual(result["earned_credit"], 0)
+            self.assertEqual(claim.call_count, 1)
+            T.run_growth_tasks(FakeAccount(), gap=0)
+            travel.assert_called_once()
+
     def test_specs_updated(self):
         self.assertEqual(T.TASK_SPECS["first_buddy"]["kind"], "chat")
         self.assertEqual(T.TASK_SPECS["first_buddy"]["reward"], 300)

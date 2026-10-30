@@ -300,6 +300,8 @@
     '国内版 (China) · copilot.tencent.com': 'China · copilot.tencent.com',
     '国内版成长任务与日常福利': 'China growth tasks and daily perks',
     '国内版任务与福利': 'China tasks and perks',
+    '自动执行国内成长任务': 'Automatically run China growth tasks',
+    '默认关闭；开启后按签到时段为“任务开”的个人账号接取、推进并领奖。上方“自动领取”仅控制手动执行。': 'Off by default. When enabled, accept, advance and claim tasks at check-in times for personal accounts with tasks enabled. Auto-claim above only controls manual runs.',
     // 页签名与区块标题：词级词典缺了「福利」，整体只能拼出「Taskand福利」。
     '任务与福利': 'Tasks & rewards',
     '国际版每日活跃福利': 'Daily activity rewards (Global)',
@@ -1451,6 +1453,8 @@
     "全部启用": "全部啟用",
     "全部启用 · 状态健康": "全部啟用 · 狀態健康",
     "全部国内账号 (批量)": "全部國內帳號 (批次)",
+    "自动执行国内成长任务": "自動執行國內成長任務",
+    "默认关闭；开启后按签到时段为“任务开”的个人账号接取、推进并领奖。上方“自动领取”仅控制手动执行。": "預設關閉；開啟後按簽到時段為「任務開」的個人帳號接取、推進並領獎。上方「自動領取」僅控制手動執行。",
     "全部模块": "全部模組",
     "全部账号": "全部帳號",
     "内置": "內建",

@@ -1146,6 +1146,21 @@ def schedule_hours(accounts_dir):
     return out
 
 
+def growth_tasks_auto_run(accounts_dir):
+    """Whether the scheduler runs the full CN growth pipeline; opt-in."""
+    return load(accounts_dir).get("growth_tasks_auto_run") is True
+
+
+def set_growth_tasks_auto_run(accounts_dir, enabled):
+    """Persist the scheduler's full-growth switch."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["growth_tasks_auto_run"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
 def set_schedule_hours(accounts_dir, value):
     """Persist a partial schedule update; returns the normalized full schedule.
 

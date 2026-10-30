@@ -281,6 +281,13 @@ class SettingsRoutes(object):
                                    "invalid_request_error")
             reply["section_max_height"] = \
                 wb_settings.set_section_max_height(_gw().ACCOUNTS_DIR, number)
+        if "growth_tasks_auto_run" in payload:
+            raw = payload.get("growth_tasks_auto_run")
+            if not isinstance(raw, bool):
+                return self._error(400, "growth_tasks_auto_run must be true or false",
+                                   "invalid_request_error")
+            reply["growth_tasks_auto_run"] = wb_settings.set_growth_tasks_auto_run(
+                _gw().ACCOUNTS_DIR, raw)
         if "schedule" in payload:
             raw = payload.get("schedule")
             if not isinstance(raw, dict):

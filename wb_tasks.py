@@ -650,10 +650,11 @@ def _progress_one(account, t, logs, gap, claim=True):
     return 0
 
 
-def run_growth_tasks(account, gap=1.0, claim=True):
-    """完整执行批量成长任务点亮与领奖。
+def run_growth_tasks(account, gap=1.0, claim=True, travel=True):
+    """Run the full growth pipeline and optionally handle cat travel.
 
-    claim=False 只推进进度、不领奖，让用户自己挑时间领取（#507）。
+    claim=False advances progress without claiming growth rewards.
+    travel=False leaves travel to its own scheduler slot.
     """
     if account.realm != "cn":
         return {"ok": False, "msg": "国际版不适用国内成长任务中心", "logs": []}
@@ -718,12 +719,12 @@ def run_growth_tasks(account, gap=1.0, claim=True):
             continue
         total_earned += _progress_one(account, t, logs, gap, claim=claim)
 
-    # 3. 顺手检查猫猫旅行
-    tr_res = do_cat_travel(account)
-    if tr_res.get("msg"):
-        logs.append(f"猫猫日常: {tr_res.get('msg')}")
-        if tr_res.get("credit"):
-            total_earned += tr_res.get("credit", 0)
+    if travel:
+        tr_res = do_cat_travel(account)
+        if tr_res.get("msg"):
+            logs.append(f"猫猫日常: {tr_res.get('msg')}")
+            if tr_res.get("credit"):
+                total_earned += tr_res.get("credit", 0)
 
     # 4. 刷新积分余额
     account.fetch_credits()

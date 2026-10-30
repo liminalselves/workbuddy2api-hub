@@ -25,5 +25,52 @@ check('completed tasks render a manual claim button',
 check('claimGrowthTask posts to /tasks/claim',
       /postJSON\('\/tasks\/claim', \{uid, code\}\)/.test(html));
 
-console.log('PASS=%d FAIL=%d', pass, fail);
-process.exit(fail ? 1 : 0);
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const input = {checked: false, disabled: false};
+const schedule = {textContent: ''};
+const requests = [];
+const errors = [];
+let rejectSave = false;
+const ctx = {
+  document: {getElementById: id => ({growthAutoRun: input, growthAutoRunSchedule: schedule}[id] || null)},
+  localStorage: {getItem: () => null},
+  toast: (message, kind) => errors.push([message, kind]),
+  getJSON: async () => ({growth_tasks_auto_run: true, growth_tasks_hours: [10, 20]}),
+  postJSON: async (url, payload) => {
+    requests.push([url, payload.growth_tasks_auto_run]);
+    assert.equal(input.disabled, true, 'disable the switch while saving');
+    if(rejectSave) throw new Error('offline');
+    return {growth_tasks_auto_run: payload.growth_tasks_auto_run};
+  }
+};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../assets/js/tasks.js'), 'utf8'), ctx);
+
+(async () => {
+  ctx.renderGrowthAutoRun({growth_tasks_auto_run: true, growth_tasks_hours: [9, 21]});
+  assert.equal(input.checked, true);
+  assert.equal(schedule.textContent, '09:00 / 21:00');
+  ctx.renderGrowthAutoRun({});
+  assert.equal(input.checked, false, 'missing settings must not enable automation');
+  input.checked = true;
+  await ctx.saveGrowthAutoRun(input);
+  assert.equal(input.checked, true);
+  assert.equal(input.disabled, false);
+  input.checked = false;
+  await ctx.saveGrowthAutoRun(input);
+  assert.equal(input.checked, false, 'a stale scheduler response must not undo the save');
+  assert.equal(input.disabled, false);
+  rejectSave = true;
+  input.checked = true;
+  await ctx.saveGrowthAutoRun(input);
+  assert.equal(input.checked, false, 'failed saves restore the previous value');
+  assert.equal(input.disabled, false);
+  assert.deepStrictEqual(requests, [['/settings/save', true], ['/settings/save', false], ['/settings/save', true]]);
+  assert.equal(errors[0][1], 'bad');
+  console.log('Auto-run switch: persistence, refresh and failure recovery passed');
+  console.log('PASS=%d FAIL=%d', pass, fail);
+  process.exitCode = fail ? 1 : 0;
+})().catch(error => { console.error(error); process.exitCode = 1; });

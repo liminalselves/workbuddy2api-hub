@@ -226,14 +226,14 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 - **每日签到**：一键完成国内版打卡领积分；
 - **自动连续打卡与连登管家**：每日定时为国内版账号上报轻量会话事件（复刻客户端 `chat_request_send`），点亮官方成长中心连登天数与热力墙；自动闭环检查昨日漏签（有补签卡则自动补签保连登）、领取新手礼包/补偿、兑换 7d/14d/28d 连登档位奖励，并自动抽完抽奖次数；
-- **成长任务与积分任务**：自动批量接取未接任务，构造规范行为事件上报点亮（画布创建、灵感案例、模板使用、模型体验、多轮对话等 14 项），并自动领奖入账；
+- **成长任务与积分任务**：「任务与福利 → 国内版任务与福利」开启「自动执行国内成长任务」（默认关闭），后台按 `schedule.checkin` 时段（默认 09:00 / 21:00，服务本地时间）为“任务开”的国内个人账号批量接取、推进进度并领奖；企业与静态 API Key 账号跳过。已领取任务不重复领奖，需真实桌面操作的任务沿用跳过规则，猫猫旅行仍按自己的时段执行。开关保存到服务端、无需重启；运行日志可查看各账号明细与到账积分。上方「自动领取」只控制手动「一键做任务」，不控制后台领奖；若需自行安排领奖时间，请关闭后台成长任务。开启后「立即巡检保活」也会执行完整成长流水；
 - **猫猫日常**：自动检查旅行状态，在家自动派出、归来自动领奖。
 
 ### 4. 后台常驻调度器
 
 常驻后台，按固定整点执行自动化运维排程：
 
-- **每日 09:00 & 21:00**：国内版账号自动签到、对话活跃上报（点亮连登）与猫猫旅行闭环；国际版账号执行每日活跃打卡（领官方每日 30/50 积分福利）；
+- **每日 09:00 & 21:00**：国内版账号自动签到、对话活跃上报（点亮连登）与猫猫旅行闭环；可选的完整成长任务流水见上一节；国际版每日活跃使用独立时段；
 - **每日 22:00**：集中扫描全库账号，Token 剩余寿命不足 2 小时自动调用 Refresh Token 保活；
 - **每日 01:00**：深夜时段执行夜猫子任务；
 - 看板顶部另有「立即巡检保活」与「每日活跃打卡 (国际版)」可随时手动触发。
@@ -505,6 +505,8 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 ## 六、版本更新记录 (Changelog)
 
 <!-- 发版时：把下面的 Unreleased 段落整理成新版本号（## vX.Y.Z），整体移入 docs/CHANGELOG.md 顶部 -->
+
+- **国内完整成长任务接入后台调度（默认关闭）**：新增服务端开关 `growth_tasks_auto_run`，入口与行为边界见[国内版自动化](#3-国内版自动化)；复用现有成长引擎，不重复执行旅行，单号异常不会中断后续账号。 / **Opt-in full China growth scheduling**: the persisted `growth_tasks_auto_run` switch reuses the existing growth runner without duplicating travel; failures are isolated per account. See the China automation section for activation and scope.
 
 - **v1.8.0 发布**：汇总 v1.7.33 之后的 #640、#642、#643、#645/#647，并补齐 #578、#618、#625 的发布记录。完整变更、验证范围与已知限制见 **[docs/CHANGELOG.md](docs/CHANGELOG.md#v180)**；下一版的改动继续写在本段。
 - **CI：main 分支新提交自动构建 Docker 镜像**：`docker-publish` 工作流在 release 之外新增 main 分支 push 触发——每个合入 main 的提交自动构建并推送双平台（amd64/arm64）镜像，标签为滚动的 `main` 与提交指纹 `sha-xxxxxxx`（配置了 Docker Hub secrets 时同步推送）；连续推送只构建最新提交，旧构建自动取消。部署端 `docker pull <镜像>:main` 即可更新。 / **CI: Docker images build automatically for every new main commit**: besides releases, the `docker-publish` workflow now triggers on pushes to main — each commit landing on main builds and pushes multi-platform (amd64/arm64) images tagged with the rolling `main` and the commit fingerprint `sha-xxxxxxx` (Docker Hub too when its secrets are configured); back-to-back pushes build only the newest commit, older builds are cancelled. Deployments update with `docker pull <image>:main`.
